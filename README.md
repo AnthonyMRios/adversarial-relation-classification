@@ -64,3 +64,18 @@ optional arguments:
   --emb_reg             Regularize word embeddings?
   --pos_reg             Regularize pos embeddings?
 ```
+
+## Acknowledgements
+
+> Anthony Rios and Ramakanth Kavuluru. "Generalizing Biomedical Relation Classification with Neural Adversarial Domain Adaptation". Bioinformatics 2018
+
+```
+@article{rios2018advrel,
+  title={Generalizing Biomedical Relation Classification with Neural Adversarial Domain Adaptation},
+  author={Rios, Anthony and Kavuluru, Ramakanth},
+  journal={Bioinformatics},
+  year={2018}
+}
+```
+
+Written by Anthony Rios (anthonymrios at gmail dot com)
