@@ -67,12 +67,12 @@ optional arguments:
 
 ## Acknowledgements
 
-> Anthony Rios and Ramakanth Kavuluru. "Generalizing Biomedical Relation Classification with Neural Adversarial Domain Adaptation". Bioinformatics 2018
+> Anthony Rios, Ramakanth Kavuluru, and Zhiyong Lu. "Generalizing Biomedical Relation Classification with Neural Adversarial Domain Adaptation". Bioinformatics 2018
 
 ```
 @article{rios2018advrel,
   title={Generalizing Biomedical Relation Classification with Neural Adversarial Domain Adaptation},
-  author={Rios, Anthony and Kavuluru, Ramakanth},
+  author={Rios, Anthony and Kavuluru, Ramakanth and Lu, Zhiyong},
   journal={Bioinformatics},
   year={2018}
 }
