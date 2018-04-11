@@ -14,6 +14,42 @@ from models.adversarial_cnn import CNN
 
 from load_data import *
 
+def new_f1(idents, true, pred, e1s, e2s, all_rels = None):
+    true_set = set()
+    if all_rels is not None:
+        true_set = all_rels
+    pred_set = set()
+    for ident, t, p, e1, e2 in zip(idents, true, pred, e1s, e2s):
+        if t == 1 and all_rels is None:
+            ents = sorted([e1, e2])
+            true_set.add((ident, ents[0], ents[1]))
+        if p == 1:
+            if all_rels is not None:
+                #    for i in e1.split(';'):
+                #        for j in e1.split(';'):
+                #ents = sorted([i, j])
+                ents = sorted([e1, e2])
+                pred_set.add((ident, ents[0], ents[1]))
+            else:
+                ents = sorted([e1, e2])
+                pred_set.add((ident, ents[0], ents[1]))
+    tps = 0
+    fps = 0
+    fns = 0
+    for i in true_set:
+        if i in pred_set:
+            tps += 1
+        else:
+            fns += 1
+    for i in pred_set:
+        if i not in true_set:
+            fps += 1
+    if tps == 0:
+        return 0.
+    prec = float(tps)/float(tps+fps)
+    rec = float(tps)/float(tps+fns)
+    return 2.*prec*rec/(prec+rec)
+
 def main():
     parser = argparse.ArgumentParser(description='Train Neural Network.')
     parser.add_argument('--num_epochs', type=int, default=25, help='Number of updates to make.')
@@ -139,7 +175,9 @@ def main():
                         np.float32(1.))
             all_test_preds += list((preds>0.5).flatten())
 
-        dev_f1 = f1_score(dev_y, all_test_preds, average='binary')
+        #dev_f1 = f1_score(dev_y, all_test_preds, average='binary')
+        #new_f1(idents, true, pred, e1s, e2s, all_rels = None):
+        dev_f1 = new_f1(dev_ids, dev_y, all_test_preds, dev_e1_ids, dev_e2_ids, all_relations)
         print("SOURCE_DEV: EPOCH: %d dev_f1: %.4f" % (epoch, dev_f1))
         sys.stdout.flush()
 
@@ -155,6 +193,21 @@ def main():
         weights = pickle.load(in_file)
     mod.__setstate__(weights)
     mod.__settarget__()
+
+    ''''
+    all_features_val = []
+    for start, end in zip(range(0, len(dev_idxs), val_mini_batch_size), range(val_mini_batch_size, len(dev_idxs)+val_mini_batch_size,
+                val_mini_batch_size)):
+        if len(dev_idxs[start:end]) == 0:
+            continue
+        tpairs = ld.pad_data([dev_pairs[i] for i in dev_idxs[start:end]])
+        te1 = ld.pad_data([dev_e1[i] for i in dev_idxs[start:end]])
+        te2 = ld.pad_data([dev_e2[i] for i in dev_idxs[start:end]])
+        feats = mod.features(tpairs, te1, te2,
+                    np.float32(1.))
+        for x in feats:
+            all_features_val.append(x.flatten())
+    '''
 
     adv_test_idxs = list(range(len(adv_test_pairs)))
 
@@ -178,11 +231,27 @@ def main():
         te2 = ld.pad_data([adv_test_e2[i] for i in adv_test_idxs[start:end]])
         preds = mod.predict_src_proba(tpairs, te1, te2,
                     np.float32(1.))
+        feats = mod.features(tpairs, te1, te2,
+                    np.float32(1.))
+        for x in feats:
+            all_features_test.append(x.flatten())
         all_test_preds += list((preds>0.5).flatten())
+        for test_id, e1_id, e2_id, p in zip(adv_test_ids[start:end], adv_test_e1_ids[start:end], adv_test_e2_ids[start:end], preds):
+            if p > 0.5:
+                all_txt_preds.append((test_id, e1_id, e2_id))
 
-    test_f1 = f1_score(adv_test_y, all_test_preds, average='binary')
+    with open(args.checkpoint_dir+'/'+'init_predictions.txt','w') as out_file:
+        for i in all_txt_preds:
+            out_file.write('%s\t%s\t%s\n' % (i[0], i[1], i[2]))
+    #test_f1 = f1_score(adv_test_y, all_test_preds, average='binary')
+    test_f1 = new_f1(adv_test_ids, adv_test_y, all_test_preds, adv_test_e1_ids, adv_test_e2_ids, all_relations)
     print("START: test_f1: %.4f sum: %d" % (test_f1, int(np.sum(np.array(all_test_preds)))))
     sys.stdout.flush()
+
+    all_features_val = mod.__getemb__()
+    all_features_test = ld.word_index
+    with open(args.checkpoint_dir+'/'+'mid_level_feats_pre.pkl','wb') as out_file:
+        pickle.dump({'src':all_features_val, 'index':all_features_test}, out_file)
 
     if args.adv:
         num_source_updates = args.num_disc_updates
@@ -190,7 +259,7 @@ def main():
         best_f1 = 0.
         for update_iter in range(1, args.num_iters+1):
             cost_disc = []
-            for k in range(args.num_disc_updates):
+            for k in range(1):
                 src_sample_idxs = list(np.random.choice(idxs, 128, replace=False))
                 src_pairs = ld.pad_data([train_pairs[i] for i in src_sample_idxs])
                 src_e1 = ld.pad_data([train_e1[i] for i in src_sample_idxs])
@@ -209,51 +278,67 @@ def main():
                          tgt_e1, tgt_e2, src_e1, src_e2, np.float32(0.))
                 cost_disc.append(cost)
 
-            tgt_sample_idxs = list(np.random.choice(adv_train_idxs, 128, replace=False))
-            tgt_pairs = ld.pad_data([adv_train_pairs[i] for i in tgt_sample_idxs])
-            tgt_e1 = ld.pad_data([adv_train_e1[i] for i in tgt_sample_idxs])
-            tgt_e2 = ld.pad_data([adv_train_e2[i] for i in tgt_sample_idxs])
-            cost = mod.train_batch_generator(tgt_pairs, tgt_e1, tgt_e2, np.float32(0.))
-            print("ITER: %d discriminator_loss: %.4f generator_loss: %.4f" % (update_iter, np.mean(cost_disc), cost))
-            sys.stdout.flush()
+            check = 1./(1.+0.001*float(update_iter))
+            if np.random.random() > check or True:
+                tgt_sample_idxs = list(np.random.choice(adv_train_idxs, 128, replace=False))
+                tgt_pairs = ld.pad_data([adv_train_pairs[i] for i in tgt_sample_idxs])
+                tgt_e1 = ld.pad_data([adv_train_e1[i] for i in tgt_sample_idxs])
+                tgt_e2 = ld.pad_data([adv_train_e2[i] for i in tgt_sample_idxs])
+                cost = mod.train_batch_generator(tgt_pairs, tgt_e1, tgt_e2, np.float32(0.))
+                print("ITER: %d discriminator_loss: %.4f generator_loss: %.4f" % (update_iter, np.mean(cost_disc), cost))
+                sys.stdout.flush()
 
-        # Predict
-        all_test_preds = []
-        all_features_test = []
-        all_txt_preds = []
-        for start, end in zip(range(0, len(adv_test_idxs), val_mini_batch_size), range(val_mini_batch_size, len(adv_test_idxs)+val_mini_batch_size,
-                    val_mini_batch_size)):
-            if len(adv_test_idxs[start:end]) == 0:
-                continue
-            tpairs = ld.pad_data([adv_test_pairs[i] for i in adv_test_idxs[start:end]])
-            te1 = ld.pad_data([adv_test_e1[i] for i in adv_test_idxs[start:end]])
-            te2 = ld.pad_data([adv_test_e2[i] for i in adv_test_idxs[start:end]])
-            preds = mod.predict_proba(tpairs, te1, te2,
-                        np.float32(1.))
-            all_test_preds += list((preds>0.5).flatten())
-            for test_id, e1_id, e2_id, p in zip(adv_test_ids[start:end], adv_test_e1_ids[start:end], adv_test_e2_ids[start:end], preds):
-                if p > 0.5:
-                    all_txt_preds.append((test_id, e1_id, e2_id))
+    # Predict
+    all_test_preds = []
+    all_features_test = []
+    all_txt_preds = []
+    for start, end in zip(range(0, len(adv_test_idxs), val_mini_batch_size), range(val_mini_batch_size, len(adv_test_idxs)+val_mini_batch_size,
+                val_mini_batch_size)):
+        if len(adv_test_idxs[start:end]) == 0:
+            continue
+        tpairs = ld.pad_data([adv_test_pairs[i] for i in adv_test_idxs[start:end]])
+        te1 = ld.pad_data([adv_test_e1[i] for i in adv_test_idxs[start:end]])
+        te2 = ld.pad_data([adv_test_e2[i] for i in adv_test_idxs[start:end]])
+        preds = mod.predict_proba(tpairs, te1, te2,
+                    np.float32(1.))
+        feats = mod.features(tpairs, te1, te2,
+                    np.float32(1.))
+        for x in feats:
+            all_features_test.append(x.flatten())
+        all_test_preds += list((preds>0.5).flatten())
+        for test_id, e1_id, e2_id, p in zip(adv_test_ids[start:end], adv_test_e1_ids[start:end], adv_test_e2_ids[start:end], preds):
+            if p > 0.5:
+                all_txt_preds.append((test_id, e1_id, e2_id))
 
-        test_f1 = f1_score(adv_test_y, all_test_preds, average='binary')
-        print("ITER: %d test_f1: %.4f sum: %d" % (update_iter, test_f1, int(np.sum(np.array(all_test_preds)))))
-        sys.stdout.flush()
-        #adv_test_ids, adv_test_e1_ids, adv_test_e2_ids
-        best_f1 = test_f1
-        #all_txt_preds = []
-        all_features_val = []
-        for start, end in zip(range(0, len(dev_idxs), val_mini_batch_size), range(val_mini_batch_size, len(dev_idxs)+val_mini_batch_size,
-                    val_mini_batch_size)):
-            if len(dev_idxs[start:end]) == 0:
-                continue
-            tpairs = ld.pad_data([dev_pairs[i] for i in dev_idxs[start:end]])
-            te1 = ld.pad_data([dev_e1[i] for i in dev_idxs[start:end]])
-            te2 = ld.pad_data([dev_e2[i] for i in dev_idxs[start:end]])
-            preds = mod.predict_proba(tpairs, te1, te2,
-                        np.float32(1.))
+    #test_f1 = f1_score(adv_test_y, all_test_preds, average='binary')
+    test_f1 = new_f1(adv_test_ids, adv_test_y, all_test_preds, adv_test_e1_ids, adv_test_e2_ids, all_relations)
+    print("ITER: %d test_f1: %.4f sum: %d" % (update_iter, test_f1, int(np.sum(np.array(all_test_preds)))))
+    sys.stdout.flush()
+    #adv_test_ids, adv_test_e1_ids, adv_test_e2_ids
+    best_f1 = test_f1
+    #all_txt_preds = []
+    all_features_val = []
+    for start, end in zip(range(0, len(dev_idxs), val_mini_batch_size), range(val_mini_batch_size, len(dev_idxs)+val_mini_batch_size,
+                val_mini_batch_size)):
+        if len(dev_idxs[start:end]) == 0:
+            continue
+        tpairs = ld.pad_data([dev_pairs[i] for i in dev_idxs[start:end]])
+        te1 = ld.pad_data([dev_e1[i] for i in dev_idxs[start:end]])
+        te2 = ld.pad_data([dev_e2[i] for i in dev_idxs[start:end]])
+        feats = mod.features(tpairs, te1, te2,
+                    np.float32(1.))
+        preds = mod.predict_proba(tpairs, te1, te2,
+                    np.float32(1.))
 
-        with open(args.checkpoint_dir+'/'+'predictions.txt','w') as out_file:
-            for i in all_txt_preds:
-                out_file.write('%s\t%s\t%s\n' % (i[0], i[1], i[2]))
+        for x in feats:
+            all_features_val.append(x.flatten())
+
+    with open(args.checkpoint_dir+'/'+'predictions.txt','w') as out_file:
+        for i in all_txt_preds:
+            out_file.write('%s\t%s\t%s\n' % (i[0], i[1], i[2]))
+    all_features_val = mod.__getemb__()
+    all_features_test = ld.word_index
+    with open(args.checkpoint_dir+'/'+'mid_level_feats_post.pkl','wb') as out_file:
+        pickle.dump({'src':all_features_val, 'index':all_features_test}, out_file)
 
 main()
